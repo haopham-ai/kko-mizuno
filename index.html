@@ -119,9 +119,16 @@ select:focus,input[type=date]:focus{border-color:var(--accent);}
 <!-- SIDEBAR -->
 <div id="sidebar">
   <div class="sidebar-logo">
-    <div class="sidebar-logo-circle">MZN</div>
+    <div style="width:80px;height:80px;margin:0 auto 8px;background:#003087;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:8px;">
+      <svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;">
+        <!-- Mizuno runbird logo simplified -->
+        <path d="M100 15 C120 5, 170 20, 175 55 C180 80, 155 90, 130 75 C115 65, 105 50, 100 15Z" fill="white"/>
+        <path d="M100 15 C80 25, 50 15, 30 40 C15 60, 30 85, 60 80 C80 75, 95 55, 100 15Z" fill="white" opacity="0.85"/>
+        <text x="100" y="115" text-anchor="middle" fill="white" font-family="Arial Black, sans-serif" font-size="28" font-weight="900" letter-spacing="3">MIZUNO</text>
+      </svg>
+    </div>
     <div class="sidebar-brand">KakaOnline</div>
-    <div class="sidebar-sub">Mizuno Dashboard</div>
+    <div class="sidebar-sub">Performance Dashboard</div>
   </div>
   <nav class="sidebar-nav">
     <div class="nav-section">Meta Ads</div>
@@ -249,9 +256,8 @@ select:focus,input[type=date]:focus{border-color:var(--accent);}
         <div class="trend-header">
           <div class="chart-title" style="margin-bottom:0;">Product — Trend theo tháng</div>
           <div class="metric-tabs">
-            <button class="metric-tab active" onclick="setProdMetric('revenue',this)">Revenue</button>
-            <button class="metric-tab" onclick="setProdMetric('orders',this)">Orders</button>
-            <button class="metric-tab" onclick="setProdMetric('spend',this)">Spend</button>
+            <button class="metric-tab active" onclick="setProdMetric('items',this)">Items Purchased</button>
+            <button class="metric-tab" onclick="setProdMetric('revenue',this)">Revenue</button>
           </div>
         </div>
         <div class="chart-wrap-lg" style="margin-top:12px;"><canvas id="chartProdMonth"></canvas></div>
@@ -269,6 +275,7 @@ const SHEETS = {
   ga4Atc:   'GA4 FB ATC',
   ga4Purch: 'GA4 FB Purchase',
   ga4Total: 'GA4 Total',
+  product:  'Product Performance',
 };
 
 // ── STATE ────────────────────────────────────────────
@@ -298,14 +305,22 @@ window.onload = () => {
 function parseSheet(key, text) {
   const lines = text.trim().split('\n');
   if (lines.length < 2) return [];
-  const headers = parseLine(lines[0]).map(h => h.trim());
-  const gi = n => headers.indexOf(n);
+  const headers = parseLine(lines[0]).map(h => h.trim().replace(/\s+/g,' '));
+  const gi = n => {
+    // Tìm chính xác trước
+    let i = headers.indexOf(n);
+    if (i >= 0) return i;
+    // Tìm case-insensitive nếu không khớp
+    i = headers.findIndex(h => h.toLowerCase() === n.toLowerCase());
+    return i;
+  };
 
   return lines.slice(1).map(line => {
     const c = parseLine(line);
     const get = (name, fallbackIdx) => {
       const i = gi(name);
-      return i >= 0 ? (c[i] || '').trim() : (c[fallbackIdx] || '').trim();
+      const raw = i >= 0 ? (c[i] || '') : (c[fallbackIdx] || '');
+      return raw.trim().replace(/\s+/g,' ');
     };
     const getNum = (name, fallbackIdx) => {
       const i = gi(name);
@@ -379,6 +394,20 @@ function parseSheet(key, text) {
         revenue: getNum('Purchase revenue'),
       };
     }
+    if (key === 'product') {
+      // A=Date, B=Source/medium, C=Session campaign, D=Item name, E=Items purchased, F=Item revenue
+      return {
+        day:      (c[0]||'').trim(),
+        source:   (c[1]||'').trim(),
+        campaign: (c[2]||'').trim(),
+        itemName: (c[3]||'').trim(),
+        itemsPurchased: num(c[4]),
+        itemRevenue:    num(c[5]),
+        date2:    c[6] ? (c[6]||'').trim() : '',
+        month:    c[7] ? (c[7]||'').trim() : '',
+        audience: c[10]? (c[10]||'').trim(): '',
+      };
+    }
     return null;
   }).filter(r => r && (r.day || r.date));
 }
@@ -410,10 +439,14 @@ function getFiltered(key) {
 function populateFilters() {
   const fb = cache.fb || [];
   const u = arr => [...new Set(arr)].filter(Boolean).sort();
+  const campTypes = u(fb.map(r => r.campType));
+  const audiences = u(fb.map(r => r.audience));
+  console.log('Campaign Types:', campTypes);
+  console.log('Audiences:', audiences);
   fill('fYear', u(fb.map(r => (r.day||'').slice(0,4))));
   fill('fMonth', u(fb.map(r => (r.day||'').slice(0,7))));
-  fill('fCampType', u(fb.map(r => r.campType)));
-  fill('fAudience', u(fb.map(r => r.audience)));
+  fill('fCampType', campTypes);
+  fill('fAudience', audiences);
   ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => { document.getElementById(id).onchange = renderAll; });
 }
 function fill(id, vals) {
@@ -537,7 +570,7 @@ function renderAll() {
   const joined = joinData();
   if (currentPage === 'overview') renderOverview(joined);
   else if (currentPage === 'audience') renderAudience(joined);
-  else if (currentPage === 'product') renderProduct(joined);
+  else if (currentPage === 'product') renderProduct();
 }
 
 // ── TAB 1: OVERVIEW ───────────────────────────────────
@@ -767,60 +800,112 @@ function setProdMetric(m, btn) {
   renderProduct(joinData());
 }
 
-function renderProduct(rows) {
-  const byProd = groupBy(rows, 'catalogueProd').sort((a,b) => b.revenue-a.revenue);
+function renderProduct() {
+  const rows = getFiltered2(cache.product || []);
 
-  if (!byProd.length) { document.getElementById('tbProduct').innerHTML='<div class="no-data">Không có dữ liệu</div>'; return; }
+  // Aggregate by item name
+  const map = {}; const order = [];
+  rows.forEach(r => {
+    const k = r.itemName || '(trống)';
+    if (!map[k]) { map[k] = {itemsPurchased:0, itemRevenue:0}; order.push(k); }
+    map[k].itemsPurchased += r.itemsPurchased;
+    map[k].itemRevenue    += r.itemRevenue;
+  });
 
-  const tableRows = byProd.map(d => {
-    const roas = d.spend>0 ? d.revenue/d.spend : 0;
-    const cr   = d.clicks>0 ? d.orders/d.clicks*100 : 0;
+  // Sort by items purchased desc, take top 10
+  const sorted = order.map(k => ({key:k, ...map[k]}))
+    .sort((a,b) => b.itemsPurchased - a.itemsPurchased)
+    .slice(0, 10);
+
+  if (!sorted.length) {
+    document.getElementById('tbProduct').innerHTML = '<div class="no-data">Không có dữ liệu</div>';
+    return;
+  }
+
+  const maxPurch = sorted[0].itemsPurchased || 1;
+  const tableRows = sorted.map((d,i) => {
+    const aov = d.itemsPurchased > 0 ? d.itemRevenue / d.itemsPurchased : 0;
+    const barW = Math.round(d.itemsPurchased / maxPurch * 100);
     return `<tr>
-      <td class="bd-key" title="${d.key}">${d.key||'(trống)'}</td>
-      <td><span class="tag tag-awo">Meta Ads</span></td>
-      <td class="num">${fVND(d.spend)}đ</td>
-      <td class="num">${fNum(d.clicks)}</td>
-      <td class="num">${fNum(d.orders)}</td>
-      <td class="num">${fVND(d.revenue)}đ</td>
-      <td class="num">${cr.toFixed(2)}%</td>
-      <td class="num ${roasClass(roas)}">${fRoas(roas)}</td>
+      <td style="font-weight:700;color:#003087;text-align:center;">${i+1}</td>
+      <td class="bd-key" title="${d.key}">${d.key}</td>
+      <td class="num">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div style="flex:1;background:#e3f2fd;border-radius:4px;height:8px;">
+            <div style="width:${barW}%;background:#003087;height:8px;border-radius:4px;"></div>
+          </div>
+          <span style="font-weight:700;min-width:28px;">${fNum(d.itemsPurchased)}</span>
+        </div>
+      </td>
+      <td class="num">${fVND(d.itemRevenue)}đ</td>
+      <td class="num">${fVND(aov)}đ</td>
     </tr>`;
   }).join('');
 
   document.getElementById('tbProduct').innerHTML = `
-    <table class="bd-table">
+    <table class="bd-table" style="min-width:500px;">
       <thead><tr>
-        <th>Catalogue Product</th><th>Source</th>
-        <th class="num">Spend</th><th class="num">Clicks</th>
-        <th class="num">Orders</th><th class="num">Revenue</th>
-        <th class="num">CR</th><th class="num">ROAS</th>
+        <th style="width:36px;">#</th>
+        <th>Item Name</th>
+        <th class="num">Items Purchased</th>
+        <th class="num">Item Revenue</th>
+        <th class="num">AOV</th>
       </tr></thead>
       <tbody>${tableRows}</tbody>
     </table>`;
 
-  // Product by month chart
-  const products = [...new Set(rows.map(r=>r.catalogueProd).filter(Boolean))].slice(0,8);
-  const months   = [...new Set(rows.map(r=>(r.day||'').slice(0,7)).filter(Boolean))].sort();
+  // Chart top 10 by month
+  const months = [...new Set(rows.map(r => (r.day||'').slice(0,7)).filter(Boolean))].sort();
+  const top10names = sorted.map(d => d.key);
   const matrix = {};
   rows.forEach(r => {
-    const p=r.catalogueProd||'(trống)', m=(r.day||'').slice(0,7);
-    if(!matrix[p])matrix[p]={};
-    if(!matrix[p][m])matrix[p][m]={spend:0,revenue:0,orders:0};
-    matrix[p][m].spend+=r.spend; matrix[p][m].revenue+=r.revenue; matrix[p][m].orders+=r.orders;
+    const p = r.itemName||'(trống)', m = (r.day||'').slice(0,7);
+    if (!top10names.includes(p)) return;
+    if (!matrix[p]) matrix[p] = {};
+    if (!matrix[p][m]) matrix[p][m] = {itemsPurchased:0, itemRevenue:0};
+    matrix[p][m].itemsPurchased += r.itemsPurchased;
+    matrix[p][m].itemRevenue    += r.itemRevenue;
   });
-  const colors=['#1877f2','#ea4335','#34a853','#fbbc05','#9c27b0','#ff5722','#00bcd4','#795548'];
+
+  const colors = ['#003087','#1877f2','#ea4335','#34a853','#fbbc05','#9c27b0','#ff5722','#00bcd4','#795548','#607d8b'];
   dc('prodMonth');
-  charts.prodMonth = new Chart(document.getElementById('chartProdMonth'),{
-    type:'bar',
-    data:{
-      labels:months,
-      datasets:products.map((p,i)=>({
-        label:p,
-        data:months.map(m=>{const d=matrix[p]?.[m];if(!d)return 0;if(prodMetric==='roas')return d.spend>0?+(d.revenue/d.spend).toFixed(2):0;return d[prodMetric]||0;}),
-        backgroundColor:colors[i%colors.length]+'99',borderColor:colors[i%colors.length],borderWidth:1,borderRadius:3,
+  charts.prodMonth = new Chart(document.getElementById('chartProdMonth'), {
+    type: 'bar',
+    data: {
+      labels: months,
+      datasets: top10names.map((p,i) => ({
+        label: p.length > 20 ? p.slice(0,20)+'…' : p,
+        data: months.map(m => {
+          const d = matrix[p]?.[m];
+          if (!d) return 0;
+          return prodMetric === 'revenue' ? d.itemRevenue : d.itemsPurchased;
+        }),
+        backgroundColor: colors[i % colors.length] + '99',
+        borderColor: colors[i % colors.length],
+        borderWidth: 1, borderRadius: 3,
       }))
     },
-    options:{plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:v=>prodMetric==='spend'||prodMetric==='revenue'?fVND(v):fNum(v),font:{size:9}},grid:{color:'#f0f0f0'}},x:{ticks:{font:{size:9}},grid:{display:false}}},responsive:true,maintainAspectRatio:false}
+    options: {
+      plugins: {legend: {position:'top', labels:{font:{size:9},boxWidth:10}}},
+      scales: {
+        y: {ticks:{callback:v=>prodMetric==='revenue'?fVND(v):fNum(v),font:{size:9}},grid:{color:'#f0f0f0'}},
+        x: {ticks:{font:{size:9}},grid:{display:false}}
+      },
+      responsive:true, maintainAspectRatio:false
+    }
+  });
+}
+
+// Filter cho product sheet (chỉ theo date, không theo campType/audience)
+function getFiltered2(rows) {
+  const year=fv('fYear'), month=fv('fMonth'), from=fv('fFrom'), to=fv('fTo');
+  return rows.filter(r => {
+    const d = r.day || '';
+    if (year  && !d.startsWith(year))  return false;
+    if (month && !d.startsWith(month)) return false;
+    if (from  && d < from) return false;
+    if (to    && d > to)   return false;
+    return true;
   });
 }
 
