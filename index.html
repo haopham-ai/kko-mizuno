@@ -357,30 +357,36 @@ function parseSheet(key, text) {
     }
     if (key === 'ga4Sess') {
       if (!c[0] || c[0].trim() === 'Date') return null;
-      // A=Date, B=Source/medium, C=Session campaign, D=Session manual term, E=Sessions(idx4), F=Event name, G=Event count
+      // Cột F = Event name, filter session_start hoặc lấy cột E = Sessions
+      const eventName = (c[5]||'').trim().toLowerCase();
+      // Nếu có Event name thì filter, nếu không thì lấy hết
+      if (eventName && !eventName.includes('session')) return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        sessions: num(c[4]) || num(c[6]), // E=Sessions, fallback G=Event count
+        sessions: num(c[4]) > 0 ? num(c[4]) : num(c[6]), // E=Sessions hoặc G=Event count
       };
     }
     if (key === 'ga4Atc') {
       if (!c[0] || c[0].trim() === 'Date') return null;
-      // Cấu trúc tương tự: E=Sessions(idx4), F=Event name(add_to_cart), G=Event count(idx6)
+      const eventName = (c[5]||'').trim().toLowerCase();
+      if (eventName && !eventName.includes('add_to_cart')) return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        atc:      num(c[6]) || num(c[4]), // G=Event count = ATC
+        atc:      num(c[6]) > 0 ? num(c[6]) : num(c[4]),
       };
     }
     if (key === 'ga4Purch') {
       if (!c[0] || c[0].trim() === 'Date') return null;
-      // E=Sessions(idx4), F=Event name, G=Event count=purchases(idx6), H=Purchase revenue(idx7)
+      const eventName = (c[5]||'').trim().toLowerCase();
+      // Chỉ lấy dòng có event name là purchase (bỏ session_start và các event khác)
+      if (eventName && !eventName.includes('purchase')) return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        orders:   num(c[6]) || num(c[4]),
-        revenue:  num(c[7]),
+        orders:   num(c[6]),  // G = Event count = số purchase
+        revenue:  num(c[7]),  // H = Purchase revenue
       };
     }
     if (key === 'ga4Total') {
