@@ -352,38 +352,31 @@ function parseSheet(key, text) {
       };
     }
     if (key === 'ga4Sess') {
-      // Cấu trúc: A=Date, B=Source/medium, C=Campaign, D=Manual term, E=Sessions, F=Event name, G=Event count, H=Purchase revenue
-      // Lấy Event count (col G, index 6) = sessions khi Event name = session_start
-      const eventName = (c[5]||'').trim().toLowerCase();
-      if (!eventName.includes('session')) return null;
+      // Sheet chỉ chứa session data, lấy thẳng Event count col G (index 6)
+      if (!c[0] || c[0].trim() === 'Date') return null; // skip header
       return {
-        day: (c[0]||'').trim(),
+        day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        audience: (c[3]||'').trim(), // Session manual term dùng làm audience key
-        sessions: num(c[6]), // Event count col G
+        sessions: num(c[6]),
       };
     }
     if (key === 'ga4Atc') {
-      // Lấy Event count (col G) = ATC khi Event name = add_to_cart
-      const eventName = (c[5]||'').trim().toLowerCase();
-      if (!eventName.includes('add_to_cart')) return null;
+      // Sheet chỉ chứa add_to_cart data, lấy thẳng Event count col G (index 6)
+      if (!c[0] || c[0].trim() === 'Date') return null;
       return {
-        day: (c[0]||'').trim(),
+        day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        audience: (c[3]||'').trim(),
-        atc: num(c[6]), // Event count col G
+        atc:      num(c[6]),
       };
     }
     if (key === 'ga4Purch') {
-      // Lấy Event count (col G) = purchases, col H = revenue khi Event name = purchase
-      const eventName = (c[5]||'').trim().toLowerCase();
-      if (!eventName.includes('purchase')) return null;
+      // Sheet chỉ chứa purchase data, col G = Event count, col H = Purchase revenue
+      if (!c[0] || c[0].trim() === 'Date') return null;
       return {
-        day: (c[0]||'').trim(),
+        day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        audience: (c[3]||'').trim(),
-        orders: num(c[6]),   // Event count col G
-        revenue: num(c[7]),  // Purchase revenue col H
+        orders:   num(c[6]),
+        revenue:  num(c[7]),
       };
     }
     if (key === 'ga4Total') {
