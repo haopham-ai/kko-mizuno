@@ -499,41 +499,34 @@ function joinData() {
   const atc   = cache.ga4Atc   || [];
   const purch = cache.ga4Purch || [];
 
-  // Build lookup: day+campaign -> metrics
-  // GA4 campaign = Session campaign (cột C)
-  // FB campaign = Campaign name (cột B) — normalize để match
-  const norm = s => (s||'').toLowerCase().trim()
-    .replace(/\s+/g,' ')
-    .replace(/eoss\d+\.\d+/gi,'') // bỏ date suffix nếu có
-    .trim();
-
+  // Join theo DAY only (campaign name FB vs GA4 format khác nhau hoàn toàn)
   const sessMap={}, atcMap={}, purchMap={};
 
   sess.forEach(r => {
-    const k = r.day+'|'+norm(r.campaign);
+    const k = (r.day||'').trim();
     sessMap[k] = (sessMap[k]||0) + (r.sessions||0);
   });
   atc.forEach(r => {
-    const k = r.day+'|'+norm(r.campaign);
+    const k = (r.day||'').trim();
     atcMap[k] = (atcMap[k]||0) + (r.atc||0);
   });
   purch.forEach(r => {
-    const k = r.day+'|'+norm(r.campaign);
+    const k = (r.day||'').trim();
     if (!purchMap[k]) purchMap[k] = {orders:0, revenue:0};
     purchMap[k].orders  += r.orders||0;
     purchMap[k].revenue += r.revenue||0;
   });
 
-  // Đếm số dòng FB per day+campaign để chia đều GA4 vào từng dòng audience
-  const fbCount = {};
+  // Đếm số dòng FB per ngày để chia đều GA4
+  const fbCountPerDay = {};
   fb.forEach(r => {
-    const k = r.day+'|'+norm(r.campaign);
-    fbCount[k] = (fbCount[k]||0) + 1;
+    const k = (r.day||'').trim();
+    fbCountPerDay[k] = (fbCountPerDay[k]||0) + 1;
   });
 
   return fb.map(r => {
-    const k = r.day+'|'+norm(r.campaign);
-    const cnt = fbCount[k] || 1;
+    const k = (r.day||'').trim();
+    const cnt = fbCountPerDay[k] || 1;
     const p = purchMap[k] || {orders:0, revenue:0};
     return {
       ...r,
