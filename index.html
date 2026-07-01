@@ -502,8 +502,8 @@ function joinData() {
   const atc   = cache.ga4Atc   || [];
   const purch = cache.ga4Purch || [];
 
-  // Join theo day + campaign + audience (cùng key giữa FB cột R và GA4 cột O,P)
-  const makeKey = r => `${(r.day||'').trim()}|${(r.campaign||'').trim().toLowerCase()}|${(r.audience||'').trim().toLowerCase()}`;
+  // Join theo day + campaign only (GA4 audience không match với FB audience)
+  const makeKey = r => `${(r.day||'').trim()}|${(r.campaign||'').trim().toLowerCase()}`;
 
   const sessMap={}, atcMap={}, purchMap={};
 
@@ -522,15 +522,23 @@ function joinData() {
     purchMap[k].revenue += r.revenue||0;
   });
 
+  // Đếm số dòng FB per day+campaign để chia đều GA4
+  const fbCount = {};
+  fb.forEach(r => {
+    const k = makeKey(r);
+    fbCount[k] = (fbCount[k]||0) + 1;
+  });
+
   return fb.map(r => {
     const k = makeKey(r);
+    const cnt = fbCount[k] || 1;
     const p = purchMap[k] || {orders:0, revenue:0};
     return {
       ...r,
-      sessions: sessMap[k] || 0,
-      atc:      atcMap[k]  || 0,
-      orders:   p.orders,
-      revenue:  p.revenue,
+      sessions: (sessMap[k]||0) / cnt,
+      atc:      (atcMap[k]||0) / cnt,
+      orders:   p.orders  / cnt,
+      revenue:  p.revenue / cnt,
       campCategory: getCampCategory(r.campaign || r.campGrp || ''),
     };
   });
