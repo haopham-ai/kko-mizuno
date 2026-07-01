@@ -196,6 +196,12 @@ select:focus,input[type=date]:focus{border-color:var(--accent);}
         </div>
       </div>
 
+      <!-- DAILY PERFORMANCE — ACTUAL vs PLAN -->
+      <div class="table-card">
+        <div class="table-title">📅 Daily Performance — Actual vs Plan (highlight ROAS cao → thấp)</div>
+        <div id="tbDaily"></div>
+      </div>
+
       <!-- FUNNEL -->
       <div class="chart-card chart-full">
         <div class="chart-title">🔽 Marketing Funnel — Awareness → Purchase</div>
@@ -278,6 +284,7 @@ const SHEETS = {
   ga4Purch: 'GA4 FB Purchase',
   ga4Total: 'GA4 Total',
   product:  'Product Performance',
+  plan:     'Overall Performance June', // ⚠️ đổi tên sheet này khi qua tháng mới (VD "Overall Performance July")
 };
 
 // ── STATE ────────────────────────────────────────────
@@ -287,18 +294,28 @@ let currentPage = 'overview';
 let dateGroup = 'day';
 let audCampFilter = 'all';
 let prodMetric = 'revenue';
+let PLAN_YEAR = '2026'; // fallback, sẽ được ghi đè bằng năm thực tế lấy từ data Facebook sau khi load xong
 
 // ── INIT ─────────────────────────────────────────────
 window.onload = () => {
+  const rawTexts = {}; // lưu csv thô, parse 'plan' riêng sau khi đã biết PLAN_YEAR
   const loads = Object.entries(SHEETS).map(([key, name]) => {
     document.getElementById('loadSub').textContent = `Loading ${name}...`;
     const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}&t=${Date.now()}`;
-    return fetch(url, {cache: 'no-store'}).then(r => r.text()).then(csv => { cache[key] = parseSheet(key, csv); }).catch(() => { cache[key] = []; });
+    return fetch(url, {cache: 'no-store'}).then(r => r.text()).then(csv => {
+      if (key === 'plan') { rawTexts.plan = csv; cache.plan = []; }
+      else cache[key] = parseSheet(key, csv);
+    }).catch(() => { cache[key] = []; });
   });
   Promise.all(loads).then(() => {
+    // Suy ra năm thực tế từ data Facebook (thay vì hardcode) rồi mới parse sheet Plan
+    if (cache.fb && cache.fb[0] && cache.fb[0].day) PLAN_YEAR = cache.fb[0].day.slice(0,4);
+    if (rawTexts.plan) cache.plan = parseSheet('plan', rawTexts.plan);
+
     console.log('FB sample:', JSON.stringify({day:cache.fb?.[0]?.day, campaign:cache.fb?.[0]?.campaign, audience:cache.fb?.[0]?.audience}));
     console.log('GA4 Sess sample:', JSON.stringify({day:cache.ga4Sess?.[0]?.day, campaign:cache.ga4Sess?.[0]?.campaign, audience:cache.ga4Sess?.[0]?.audience, sessions:cache.ga4Sess?.[0]?.sessions}));
     console.log('GA4 Purch sample:', JSON.stringify({day:cache.ga4Purch?.[0]?.day, campaign:cache.ga4Purch?.[0]?.campaign, audience:cache.ga4Purch?.[0]?.audience, orders:cache.ga4Purch?.[0]?.orders, revenue:cache.ga4Purch?.[0]?.revenue}));
+    console.log('Plan sample:', cache.plan?.[0], 'tổng dòng plan:', cache.plan?.length);
     populateFilters();
     renderAll();
     document.getElementById('loading').style.display = 'none';
@@ -436,6 +453,21 @@ function parseSheet(key, text) {
         month:    c[7] ? (c[7]||'').trim() : '',
         audience: c[10]? (c[10]||'').trim(): '',
       };
+    }
+    if (key === 'plan') {
+      // B (index 1) = Date dạng "DD.M" (VD "22.6" = 22 tháng 6)
+      // AO (index 40) = Total Spend Plan, AQ (index 42) = Paid Rev Plan, AS (index 44) = ROAS Plan
+      const raw = (c[1]||'').trim();
+      const m = raw.match(/^(\d{1,2})\.(\d{1,2})$/);
+      if (!m) return null;
+      const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
+      const day = `${PLAN_YEAR}-${mm}-${dd}`;
+      const spend   = num(c[40]);
+      const revenue = num(c[42]);
+      let roas = num(c[44]);
+      if (!roas && spend > 0) roas = revenue / spend;
+      if (!spend && !revenue) return null; // dòng chưa có kế hoạch (dấu "-")
+      return { day, spend, revenue, roas };
     }
     return null;
   }).filter(r => r && (r.day || r.date));
@@ -661,6 +693,7 @@ function renderOverview(rows) {
   document.getElementById('sc-cir').textContent = fCiR(cir);
 
   renderPerformanceChart(rows);
+  renderDailyTable(rows);
   renderFunnel(t);
   renderAdShare(rows);
   renderCampTypeChart(rows);
@@ -711,6 +744,78 @@ function getWeek(dateStr) {
   const start = new Date(d.getFullYear(), 0, 1);
   const week = Math.ceil(((d - start) / 86400000 + start.getDay() + 1) / 7);
   return `${d.getFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+
+// ── DAILY PERFORMANCE (ACTUAL vs PLAN) ────────────────
+function roasHeatColor(value, min, max) {
+  // Heatmap: đỏ nhạt (thấp) -> vàng -> xanh lá (cao), theo thang min-max của tập ngày đang hiển thị
+  if (max <= min) return 'rgba(158,158,158,.10)';
+  const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  // nội suy: đỏ (0) -> vàng (0.5) -> xanh lá (1)
+  let r,g,b;
+  if (t < 0.5) { const k = t/0.5; r=229; g=Math.round(83+(179-83)*k); b=57; }
+  else { const k=(t-0.5)/0.5; r=Math.round(229-(229-76)*k); g=Math.round(179+(175-179)*k); b=Math.round(57+(80-57)*k); }
+  return `rgba(${r},${g},${b},.22)`;
+}
+
+function renderDailyTable(rows) {
+  const map = {};
+  rows.forEach(r => {
+    const k = r.day || '';
+    if (!k) return;
+    if (!map[k]) map[k] = { spend:0, revenue:0 };
+    map[k].spend += r.spend||0;
+    map[k].revenue += r.revenue||0;
+  });
+
+  const planMap = {};
+  (cache.plan||[]).forEach(p => { planMap[p.day] = p; });
+
+  const days = [...new Set([...Object.keys(map), ...Object.keys(planMap)])].sort();
+  if (!days.length) { document.getElementById('tbDaily').innerHTML = '<div class="no-data">Không có dữ liệu</div>'; return; }
+
+  const list = days.map(d => {
+    const a = map[d] || {spend:0, revenue:0};
+    const p = planMap[d] || null;
+    const roasActual = a.spend > 0 ? a.revenue / a.spend : 0;
+    return { day:d, spend:a.spend, revenue:a.revenue, roas:roasActual, plan:p };
+  });
+
+  const roasVals = list.map(l=>l.roas).filter(v=>v>0);
+  const minRoas = roasVals.length ? Math.min(...roasVals) : 0;
+  const maxRoas = roasVals.length ? Math.max(...roasVals) : 0;
+
+  const rowsHtml = list.map(l => {
+    const dLabel = l.day.slice(8,10) + '.' + String(+l.day.slice(5,7));
+    const heat = l.roas > 0 ? roasHeatColor(l.roas, minRoas, maxRoas) : 'transparent';
+    const planSpend = l.plan ? l.plan.spend : null;
+    const planRevenue = l.plan ? l.plan.revenue : null;
+    const planRoas = l.plan ? l.plan.roas : null;
+    const spendGap = planSpend ? fPct(l.spend - planSpend, planSpend) : '–';
+    const revGap = planRevenue ? fPct(l.revenue - planRevenue, planRevenue) : '–';
+    return `<tr>
+      <td style="font-weight:700;">${dLabel}</td>
+      <td class="num">${fVND(l.spend)}đ</td>
+      <td class="num" style="color:var(--text-light);">${planSpend!=null? fVND(planSpend)+'đ' : '–'}</td>
+      <td class="num">${l.spend && planSpend ? spendGap : '–'}</td>
+      <td class="num">${fVND(l.revenue)}đ</td>
+      <td class="num" style="color:var(--text-light);">${planRevenue!=null? fVND(planRevenue)+'đ' : '–'}</td>
+      <td class="num">${l.revenue && planRevenue ? revGap : '–'}</td>
+      <td class="num" style="background:${heat};font-weight:700;">${fRoas(l.roas)}</td>
+      <td class="num" style="color:var(--text-light);">${planRoas!=null? fRoas(planRoas) : '–'}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('tbDaily').innerHTML = `
+    <table class="bd-table" style="min-width:760px;">
+      <thead><tr>
+        <th>Ngày</th>
+        <th class="num">Cost (Actual)</th><th class="num">Cost (Plan)</th><th class="num">±%</th>
+        <th class="num">Revenue (Actual)</th><th class="num">Revenue (Plan)</th><th class="num">±%</th>
+        <th class="num">ROAS (Actual)</th><th class="num">ROAS (Plan)</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
 }
 
 function setDateGroup(g, btn) {
