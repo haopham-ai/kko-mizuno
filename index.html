@@ -307,10 +307,35 @@ window.onload = () => {
 };
 
 // ── PARSE SHEETS ─────────────────────────────────────
+// Parser CSV chuẩn: đọc theo từng ký tự, tôn trọng dấu ngoặc kép kể cả khi
+// giá trị ô chứa dấu xuống dòng bên trong (bug cũ: split theo '\n' đơn giản
+// làm gãy toàn bộ các dòng phía sau nếu có 1 ô bị wrap/newline).
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\r') { /* skip */ }
+      else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else field += ch;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
 function parseSheet(key, text) {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return [];
-  const headers = parseLine(lines[0]).map(h => h.trim().replace(/\s+/g,' '));
+  const allRows = parseCSV(text.trim());
+  if (allRows.length < 2) return [];
+  const headers = allRows[0].map(h => (h||'').trim().replace(/\s+/g,' '));
   const gi = n => {
     // Tìm chính xác trước
     let i = headers.indexOf(n);
@@ -320,8 +345,7 @@ function parseSheet(key, text) {
     return i;
   };
 
-  return lines.slice(1).map(line => {
-    const c = parseLine(line);
+  return allRows.slice(1).map(c => {
     const get = (name, fallbackIdx) => {
       const i = gi(name);
       const raw = i >= 0 ? (c[i] || '') : (c[fallbackIdx] || '');
