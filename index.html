@@ -296,6 +296,10 @@ window.onload = () => {
     return fetch(url, {cache: 'no-store'}).then(r => r.text()).then(csv => { cache[key] = parseSheet(key, csv); }).catch(() => { cache[key] = []; });
   });
   Promise.all(loads).then(() => {
+    console.log('FB rows:', (cache.fb||[]).length);
+    console.log('GA4 Session rows:', (cache.ga4Sess||[]).length, 'sample:', (cache.ga4Sess||[])[0]);
+    console.log('GA4 ATC rows:', (cache.ga4Atc||[]).length, 'sample:', (cache.ga4Atc||[])[0]);
+    console.log('GA4 Purch rows:', (cache.ga4Purch||[]).length, 'sample:', (cache.ga4Purch||[])[0]);
     populateFilters();
     renderAll();
     document.getElementById('loading').style.display = 'none';
@@ -352,30 +356,30 @@ function parseSheet(key, text) {
       };
     }
     if (key === 'ga4Sess') {
-      // Sheet chỉ chứa session data, lấy thẳng Event count col G (index 6)
-      if (!c[0] || c[0].trim() === 'Date') return null; // skip header
+      if (!c[0] || c[0].trim() === 'Date') return null;
+      // A=Date, B=Source/medium, C=Session campaign, D=Session manual term, E=Sessions(idx4), F=Event name, G=Event count
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        sessions: num(c[6]),
+        sessions: num(c[4]) || num(c[6]), // E=Sessions, fallback G=Event count
       };
     }
     if (key === 'ga4Atc') {
-      // Sheet chỉ chứa add_to_cart data, lấy thẳng Event count col G (index 6)
       if (!c[0] || c[0].trim() === 'Date') return null;
+      // Cấu trúc tương tự: E=Sessions(idx4), F=Event name(add_to_cart), G=Event count(idx6)
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        atc:      num(c[6]),
+        atc:      num(c[6]) || num(c[4]), // G=Event count = ATC
       };
     }
     if (key === 'ga4Purch') {
-      // Sheet chỉ chứa purchase data, col G = Event count, col H = Purchase revenue
       if (!c[0] || c[0].trim() === 'Date') return null;
+      // E=Sessions(idx4), F=Event name, G=Event count=purchases(idx6), H=Purchase revenue(idx7)
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        orders:   num(c[6]),
+        orders:   num(c[6]) || num(c[4]),
         revenue:  num(c[7]),
       };
     }
