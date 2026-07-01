@@ -161,7 +161,9 @@ select:focus,input[type=date]:focus{border-color:var(--accent);}
     <!-- TAB 1: OVERVIEW -->
     <div class="page active" id="page-overview">
       <div class="section-title">📊 Campaign Overview</div>
-      <div class="section-sub">Tổng quan hiệu suất Meta Ads × GA4 — Mizuno Vietnam</div>
+      <div class="section-sub">Tổng quan hiệu suất Meta Ads × GA4 — Mizuno Vietnam
+        <span id="ga4Note" style="display:none;margin-left:8px;background:#fff3e0;color:#e65100;font-size:11px;padding:2px 8px;border-radius:4px;">⚠️ GA4 data (Sessions/ATC/Orders/Revenue) được phân bổ ước tính theo Campaign khi filter Audience</span>
+      </div>
 
       <!-- ROW 1: COST + TRAFFIC -->
       <div class="scorecards">
@@ -290,8 +292,8 @@ let prodMetric = 'revenue';
 window.onload = () => {
   const loads = Object.entries(SHEETS).map(([key, name]) => {
     document.getElementById('loadSub').textContent = `Loading ${name}...`;
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`;
-    return fetch(url).then(r => r.text()).then(csv => { cache[key] = parseSheet(key, csv); }).catch(() => { cache[key] = []; });
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}&t=${Date.now()}`;
+    return fetch(url, {cache: 'no-store'}).then(r => r.text()).then(csv => { cache[key] = parseSheet(key, csv); }).catch(() => { cache[key] = []; });
   });
   Promise.all(loads).then(() => {
     populateFilters();
@@ -447,7 +449,9 @@ function populateFilters() {
   fill('fMonth', u(fb.map(r => (r.day||'').slice(0,7))));
   fill('fCampType', campTypes);
   fill('fAudience', audiences);
-  ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => { document.getElementById(id).onchange = renderAll; });
+  ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => {
+    document.getElementById(id).onchange = () => { updateGA4Note(); renderAll(); };
+  });
 }
 function fill(id, vals) {
   const el = document.getElementById(id); const first = el.options[0];
@@ -455,7 +459,12 @@ function fill(id, vals) {
   vals.forEach(v => { const o = document.createElement('option'); o.value = o.textContent = v; el.appendChild(o); });
 }
 function fv(id) { return document.getElementById(id).value; }
-function clearFilters() { ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => document.getElementById(id).value=''); renderAll(); }
+function clearFilters() { ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => document.getElementById(id).value=''); updateGA4Note(); renderAll(); }
+
+function updateGA4Note() {
+  const note = document.getElementById('ga4Note');
+  if (note) note.style.display = fv('fAudience') ? 'inline' : 'none';
+}
 
 // ── AGGREGATE ─────────────────────────────────────────
 function sumFB(rows) {
@@ -484,53 +493,54 @@ function groupBy(rows, key) {
   return order.map(k => ({key:k,...map[k]}));
 }
 
-// Join FB + GA4 by date + campaign (Session manual term ≈ Campaign name)
 function joinData() {
   const fb = getFiltered('fb');
-  const sess = cache.ga4Sess || [];
-  const atc  = cache.ga4Atc  || [];
-  const purch= cache.ga4Purch|| [];
+  const sess  = cache.ga4Sess  || [];
+  const atc   = cache.ga4Atc   || [];
+  const purch = cache.ga4Purch || [];
 
-  // Build lookup maps by day (GA4 data tổng theo ngày vì campaign name có thể format khác)
-  const sessMap = {}, atcMap = {}, purchMap = {};
+  // Build lookup: day+campaign -> metrics
+  // GA4 campaign = Session campaign (cột C)
+  // FB campaign = Campaign name (cột B) — normalize để match
+  const norm = s => (s||'').toLowerCase().trim()
+    .replace(/\s+/g,' ')
+    .replace(/eoss\d+\.\d+/gi,'') // bỏ date suffix nếu có
+    .trim();
+
+  const sessMap={}, atcMap={}, purchMap={};
 
   sess.forEach(r => {
-    const k = (r.day||'').trim();
+    const k = r.day+'|'+norm(r.campaign);
     sessMap[k] = (sessMap[k]||0) + (r.sessions||0);
   });
   atc.forEach(r => {
-    const k = (r.day||'').trim();
+    const k = r.day+'|'+norm(r.campaign);
     atcMap[k] = (atcMap[k]||0) + (r.atc||0);
   });
   purch.forEach(r => {
-    const k = (r.day||'').trim();
+    const k = r.day+'|'+norm(r.campaign);
     if (!purchMap[k]) purchMap[k] = {orders:0, revenue:0};
     purchMap[k].orders  += r.orders||0;
     purchMap[k].revenue += r.revenue||0;
   });
 
-  // Aggregate FB by day first, then attach GA4
-  const dayMap = {};
+  // Đếm số dòng FB per day+campaign để chia đều GA4 vào từng dòng audience
+  const fbCount = {};
   fb.forEach(r => {
-    const k = (r.day||'').trim();
-    if (!dayMap[k]) dayMap[k] = {...r, spend:0, impressions:0, clicks:0, reach:0};
-    dayMap[k].spend       += r.spend;
-    dayMap[k].impressions += r.impressions;
-    dayMap[k].clicks      += r.clicks;
-    dayMap[k].reach       += r.reach;
+    const k = r.day+'|'+norm(r.campaign);
+    fbCount[k] = (fbCount[k]||0) + 1;
   });
 
-  // Merge GA4 into day aggregates then expand back to FB rows
   return fb.map(r => {
-    const k = (r.day||'').trim();
+    const k = r.day+'|'+norm(r.campaign);
+    const cnt = fbCount[k] || 1;
     const p = purchMap[k] || {orders:0, revenue:0};
-    const totalFBRows = fb.filter(x => x.day === r.day).length || 1;
     return {
       ...r,
-      sessions: (sessMap[k]||0) / totalFBRows,
-      atc:      (atcMap[k]||0) / totalFBRows,
-      orders:   p.orders  / totalFBRows,
-      revenue:  p.revenue / totalFBRows,
+      sessions: (sessMap[k]||0) / cnt,
+      atc:      (atcMap[k]||0) / cnt,
+      orders:   p.orders  / cnt,
+      revenue:  p.revenue / cnt,
       campCategory: getCampCategory(r.campType || r.campGrp || ''),
     };
   });
