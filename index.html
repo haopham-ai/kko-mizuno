@@ -357,36 +357,33 @@ function parseSheet(key, text) {
     }
     if (key === 'ga4Sess') {
       if (!c[0] || c[0].trim() === 'Date') return null;
-      // Cột F = Event name, filter session_start hoặc lấy cột E = Sessions
       const eventName = (c[5]||'').trim().toLowerCase();
-      // Nếu có Event name thì filter, nếu không thì lấy hết
-      if (eventName && !eventName.includes('session')) return null;
+      if (eventName !== 'session_start') return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        sessions: num(c[4]) > 0 ? num(c[4]) : num(c[6]), // E=Sessions hoặc G=Event count
+        sessions: num(c[6]), // col G = Event count
       };
     }
     if (key === 'ga4Atc') {
       if (!c[0] || c[0].trim() === 'Date') return null;
       const eventName = (c[5]||'').trim().toLowerCase();
-      if (eventName && !eventName.includes('add_to_cart')) return null;
+      if (eventName !== 'add_to_cart') return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        atc:      num(c[6]) > 0 ? num(c[6]) : num(c[4]),
+        atc:      num(c[6]), // col G = Event count
       };
     }
     if (key === 'ga4Purch') {
       if (!c[0] || c[0].trim() === 'Date') return null;
       const eventName = (c[5]||'').trim().toLowerCase();
-      // Chỉ lấy dòng có event name là purchase (bỏ session_start và các event khác)
-      if (eventName && !eventName.includes('purchase')) return null;
+      if (eventName !== 'purchase') return null;
       return {
         day:      (c[0]||'').trim(),
         campaign: (c[2]||'').trim(),
-        orders:   num(c[6]),  // G = Event count = số purchase
-        revenue:  num(c[7]),  // H = Purchase revenue
+        orders:   num(c[6]), // col G = Event count
+        revenue:  num(c[7]), // col H = Purchase revenue
       };
     }
     if (key === 'ga4Total') {
