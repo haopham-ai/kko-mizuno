@@ -469,16 +469,34 @@ function populateFilters() {
   const fb = cache.fb || [];
   const u = arr => [...new Set(arr)].filter(Boolean).sort();
   const campTypes = u(fb.map(r => r.campType));
-  const audiences = u(fb.map(r => r.audience));
   console.log('Campaign Types:', campTypes);
-  console.log('Audiences:', audiences);
+  console.log('Audiences:', u(fb.map(r => r.audience)));
   fill('fYear', u(fb.map(r => (r.day||'').slice(0,4))));
   fill('fMonth', u(fb.map(r => (r.day||'').slice(0,7))));
   fill('fCampType', campTypes);
-  fill('fAudience', audiences);
+  updateAudienceOptions(); // populate Audience lần đầu (theo Campaign Type hiện tại, mặc định = All)
+
   ['fYear','fMonth','fFrom','fTo','fCampType','fAudience'].forEach(id => {
-    document.getElementById(id).onchange = () => { updateGA4Note(); renderAll(); };
+    document.getElementById(id).onchange = () => {
+      if (id === 'fCampType') updateAudienceOptions(); // đổi Campaign Type -> lọc lại danh sách Audience
+      updateGA4Note();
+      renderAll();
+    };
   });
+}
+
+// Audience dropdown chỉ hiện các audience thực sự tồn tại trong Campaign Type đang chọn
+function updateAudienceOptions() {
+  const fb = cache.fb || [];
+  const campType = fv('fCampType');
+  const currentAudience = fv('fAudience');
+  const scoped = campType ? fb.filter(r => r.campType === campType) : fb;
+  const audiences = [...new Set(scoped.map(r => r.audience))].filter(Boolean).sort();
+  fill('fAudience', audiences);
+  // giữ lại lựa chọn cũ nếu vẫn còn hợp lệ trong danh sách mới, nếu không thì reset về All
+  if (currentAudience && audiences.includes(currentAudience)) {
+    document.getElementById('fAudience').value = currentAudience;
+  }
 }
 function fill(id, vals) {
   const el = document.getElementById(id); const first = el.options[0];
@@ -521,7 +539,8 @@ function groupBy(rows, key) {
 }
 
 function joinData() {
-  const fb = getFiltered('fb');
+  const allFb = cache.fb || [];   // dữ liệu GỐC, chưa filter — dùng để tính trọng số phân bổ
+  const fb    = getFiltered('fb'); // dữ liệu đã filter — dùng để hiển thị/tổng hợp
   const sess  = cache.ga4Sess  || [];
   const atc   = cache.ga4Atc   || [];
   const purch = cache.ga4Purch || [];
@@ -546,23 +565,27 @@ function joinData() {
     purchMap[k].revenue += r.revenue||0;
   });
 
-  // Đếm số dòng FB per day+campaign để chia đều GA4
-  const fbCount = {};
-  fb.forEach(r => {
+  // Tổng Spend theo day+campaign trên TOÀN BỘ dữ liệu gốc (không phụ thuộc filter)
+  // -> dùng làm mẫu số phân bổ, để khi filter Campaign Type/Audience, mỗi dòng chỉ nhận
+  //    đúng phần GA4 tương ứng với tỷ trọng chi tiêu của nó trong ngày+campaign đó,
+  //    thay vì cả nhóm GA4 dồn hết vào phần dữ liệu còn sót lại sau filter.
+  const groupSpend = {};
+  allFb.forEach(r => {
     const k = makeKey(r);
-    fbCount[k] = (fbCount[k]||0) + 1;
+    groupSpend[k] = (groupSpend[k]||0) + (r.spend||0);
   });
 
   return fb.map(r => {
     const k = makeKey(r);
-    const cnt = fbCount[k] || 1;
+    const totalSpend = groupSpend[k] || 0;
+    const weight = totalSpend > 0 ? (r.spend||0) / totalSpend : 0;
     const p = purchMap[k] || {orders:0, revenue:0};
     return {
       ...r,
-      sessions: (sessMap[k]||0) / cnt,
-      atc:      (atcMap[k]||0) / cnt,
-      orders:   p.orders  / cnt,
-      revenue:  p.revenue / cnt,
+      sessions: (sessMap[k]||0) * weight,
+      atc:      (atcMap[k]||0) * weight,
+      orders:   p.orders  * weight,
+      revenue:  p.revenue * weight,
       campCategory: getCampCategory(r.campaign || r.campGrp || ''),
     };
   });
